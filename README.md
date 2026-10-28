@@ -2,7 +2,7 @@
 
 > 医学人工智能导论课程项目 —— 把「模型输出的概率」和「临床决策的阈值」放在同一张桌子上。
 >
-> 仓库：<https://github.com/juwairenyixia/->
+> 仓库：<https://github.com/juwairenyixia/diabetes-threshold-lab>
 
 ![页面预览](docs/preview.png)
 
@@ -116,21 +116,19 @@ python scripts/train.py
 
 ## 部署到 GitHub Pages
 
-仓库已初始化并完成首次提交。把远程地址换成你自己的即可：
-
-```bash
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-git push -u origin main
-```
-
-然后在 GitHub 仓库中：
+代码已推送到 <https://github.com/juwairenyixia/diabetes-threshold-lab>。要把它发布成网站，在 GitHub 仓库中：
 
 1. **Settings → Pages**
 2. **Build and deployment → Source** 选择 **Deploy from a branch**
 3. 分支选 **main**，目录选 **/(root)**，保存
-4. 一两分钟后访问 `https://juwairenyixia.github.io/-/`
+4. 一两分钟后访问 `https://juwairenyixia.github.io/diabetes-threshold-lab/`
 
-> 仓库名目前是 `-`，所以 Pages 地址会带一个 `/-/`。如果觉得别扭，可以在 **Settings → General → Repository name** 改成 `diabetes-threshold-lab`，再把远程地址改成新地址，页面地址也会随之变成 `https://juwairenyixia.github.io/diabetes-threshold-lab/`。
+如果需要在另一台机器上重新推送：
+
+```bash
+git remote add origin https://github.com/juwairenyixia/diabetes-threshold-lab.git
+git push -u origin main
+```
 
 ---
 
