@@ -1,0 +1,18 @@
+# 开发与系统文件
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 依赖与构建产物（本项目本身没有依赖）
+node_modules/
+dist/
+
+# 开发期截图与浏览器配置
+shots/
