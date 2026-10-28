@@ -1,6 +1,8 @@
 # 糖尿病风险 · 决策阈值实验室
 
 > 医学人工智能导论课程项目 —— 把「模型输出的概率」和「临床决策的阈值」放在同一张桌子上。
+>
+> 仓库：<https://github.com/juwairenyixia/->
 
 ![页面预览](docs/preview.png)
 
@@ -126,9 +128,9 @@ git push -u origin main
 1. **Settings → Pages**
 2. **Build and deployment → Source** 选择 **Deploy from a branch**
 3. 分支选 **main**，目录选 **/(root)**，保存
-4. 一两分钟后访问 `https://<你的用户名>.github.io/<仓库名>/`
+4. 一两分钟后访问 `https://juwairenyixia.github.io/-/`
 
-最后把 `index.html` 顶部导航里的 GitHub 链接（目前是 `https://github.com/`）替换成你的仓库地址。
+> 仓库名目前是 `-`，所以 Pages 地址会带一个 `/-/`。如果觉得别扭，可以在 **Settings → General → Repository name** 改成 `diabetes-threshold-lab`，再把远程地址改成新地址，页面地址也会随之变成 `https://juwairenyixia.github.io/diabetes-threshold-lab/`。
 
 ---
 
