@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>糖尿病风险 · 决策阈值实验室</title>
-<meta name="description" content="基于 Pima 数据集的糖尿病风险预测交互演示：拖动指标看概率变化，调节阈值看敏感度、特异度与临床代价如何互相拉扯。">
+<meta name="description" content="基于 10 万条混合性别 EHR 数据的糖尿病风险预测交互演示：选择性别、拖动指标看概率，调节阈值看敏感度、特异度与临床代价如何拉扯。">
 <meta name="color-scheme" content="light">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230f8d88'/%3E%3Cpath d='M5 17h6l2.5-6 4 12 3-8 2 2h4.5' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/css/style.css">
@@ -31,13 +31,13 @@
   <div class="shell hero__inner">
     <p class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>医学人工智能导论 · 课程项目</p>
     <h1>糖尿病风险预测<br><span class="grad">与决策阈值实验室</span></h1>
-    <p class="lead">模型只负责给出一个概率；是否把它当作「阳性」，取决于你把阈值放在哪里。拖动滑杆，观察敏感度、特异度与临床代价如何互相拉扯。</p>
+    <p class="lead">模型只负责给出一个概率；是否把它当作「阳性」，取决于你把阈值放在哪里。选择性别、拖动指标，观察敏感度、特异度与临床代价如何互相拉扯。</p>
 
     <dl class="hero__stats">
-      <div><dt>测试集 AUC</dt><dd>0.806</dd></div>
-      <div><dt>样本量</dt><dd>768</dd></div>
+      <div><dt>测试集 AUC</dt><dd>0.956</dd></div>
+      <div><dt>样本量</dt><dd>79,334</dd></div>
       <div><dt>输入特征</dt><dd>8</dd></div>
-      <div><dt>患病率</dt><dd>34.9<span>%</span></dd></div>
+      <div><dt>患病率</dt><dd>10.5<span>%</span></dd></div>
     </dl>
   </div>
 </header>
@@ -49,12 +49,12 @@
     <div class="panel__head">
       <div class="panel__title">
         <span class="kicker">01 · 患者评估</span>
-        <h2>输入常规指标，<br class="m-br">实时得到风险概率</h2>
-        <p class="panel__sub">全部计算在浏览器本地完成，不会上传任何数据。</p>
+        <h2>选择性别，<br class="m-br">输入指标，实时得到风险概率</h2>
+        <p class="panel__sub">性别本身参与建模：男性基线风险高于女性（12.7% 对 9.1%）。全部计算在浏览器本地完成，不会上传任何数据。</p>
       </div>
       <button class="ghost-btn" id="resetBtn" type="button">
         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.16M13.5 2v4.2H9.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        重置为人群中位数
+        重置为示例患者
       </button>
     </div>
 
@@ -64,10 +64,26 @@
           <h3>患者档案</h3>
           <div class="presets" id="presets" role="group" aria-label="载入示例病例"></div>
         </div>
+
+        <div class="sex-field">
+          <div class="sex-field__head">
+            <span class="field-label">性别</span>
+            <span class="sex-field__hint" id="sexHint">女性 · 患病率 9.1%</span>
+          </div>
+          <div class="segment" id="sexField" role="radiogroup" aria-label="性别">
+            <button class="segment__opt is-active" type="button" data-value="0" role="radio" aria-checked="true">
+              <span class="segment__sym" aria-hidden="true">♀</span>女性
+            </button>
+            <button class="segment__opt" type="button" data-value="1" role="radio" aria-checked="false">
+              <span class="segment__sym" aria-hidden="true">♂</span>男性
+            </button>
+          </div>
+        </div>
+
         <div class="sliders" id="sliders"></div>
         <p class="hint">
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v4M8 4.9v.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          原始数据中，部分指标的 <b>0</b> 表示「未测量」。训练时按训练集中位数插补，滑杆归零也会触发同样的处理。
+          数据已去重并限定 18 岁以上；吸烟史里的「不详」会作为独立类别参与模型。
         </p>
       </div>
 
@@ -95,7 +111,7 @@
           <span class="chart-note">对数几率 · 各项可相加</span>
         </div>
         <div class="contrib-chart" id="contribChart"></div>
-        <p class="chart-foot">中轴为 0：条形向右推高风险，向左降低风险；长度与 logit 变化成正比。</p>
+        <p class="chart-foot">零线为 0：条形向右推高风险，向左降低风险；长度与 logit 变化成正比。</p>
       </div>
       <aside class="logit-card">
         <h4>LOGIT 拆解</h4>
@@ -116,7 +132,7 @@
       <div class="panel__title">
         <span class="kicker">02 · 阈值实验室</span>
         <h2>阈值不是 0.5：<br class="m-br">亲手权衡漏诊与误诊</h2>
-        <p class="panel__sub">默认的 0.5 只是数学上的对称点。在筛查场景里，漏诊的代价通常远高于误诊，最优阈值往往更低。</p>
+        <p class="panel__sub">模型 AUC 0.956，看起来很好；但在默认阈值 0.5 下，仍有 35% 的患者被漏掉。拖动阈值，看敏感度、特异度与代价如何变化。</p>
       </div>
     </div>
 
@@ -142,7 +158,7 @@
       <div class="chart-card">
         <div class="chart-head">
           <h3>ROC 曲线</h3>
-          <span class="chart-note">AUC <b id="aucVal">0.806</b> · 圆点为当前阈值</span>
+          <span class="chart-note">AUC <b id="aucVal">0.956</b> · 圆点为当前阈值</span>
         </div>
         <div class="chart chart--roc" id="rocChart"></div>
         <p class="chart-foot">曲线越靠近左上角越好；阈值沿曲线滑动，就是在敏感度与特异度之间换位置。</p>
@@ -151,7 +167,7 @@
       <div class="chart-card">
         <div class="chart-head">
           <h3>混淆矩阵</h3>
-          <span class="chart-note">测试集 <b>154</b> 例</span>
+          <span class="chart-note">测试集 <b>15,867</b> 例</span>
         </div>
         <div class="matrix" id="matrix"></div>
         <div class="metrics" id="metrics"></div>
@@ -168,6 +184,7 @@
           <span class="legend__item"><i class="swatch swatch--neg"></i>实际未患病</span>
           <span class="legend__item"><i class="swatch swatch--pos"></i>实际患病</span>
           <span class="legend__item"><i class="swatch swatch--line"></i>当前阈值</span>
+          <span class="legend__item legend__item--note">纵轴：对数刻度</span>
         </div>
       </div>
 
@@ -188,13 +205,13 @@
       <div class="panel__title">
         <span class="kicker">03 · 模型与数据</span>
         <h2>模型卡：<br class="m-br">它是什么，以及它不能做什么</h2>
-        <p class="panel__sub">一个 8 维逻辑回归，透明、可复现，也带着明显的历史局限。</p>
+        <p class="panel__sub">一个 8 项输入的逻辑回归，含性别；透明、可复现，也带着明显的数据局限。</p>
       </div>
     </div>
 
     <div class="pipeline">
       <span class="pipe">原始数据</span><i>→</i>
-      <span class="pipe">中位数插补</span><i>→</i>
+      <span class="pipe">去重 / 年龄筛选</span><i>→</i>
       <span class="pipe">标准化</span><i>→</i>
       <span class="pipe">逻辑回归</span><i>→</i>
       <span class="pipe">概率</span><i>→</i>
@@ -207,12 +224,12 @@
           <svg viewBox="0 0 20 20" fill="none"><ellipse cx="10" cy="5" rx="7" ry="2.6" stroke="currentColor" stroke-width="1.4"/><path d="M3 5v5c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V5M3 10v5c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6v-5" stroke="currentColor" stroke-width="1.4"/></svg>
         </span>
         <h3>数据</h3>
-        <p class="info-card__lead">Pima Indians Diabetes Database</p>
+        <p class="info-card__lead">Diabetes Prediction Dataset</p>
         <ul class="ticks">
-          <li>768 名 ≥21 岁皮马族女性，1988 年公开</li>
-          <li>8 项常规指标，患病率 34.9%</li>
-          <li>分层 8 : 2 划分：训练 614 / 测试 154</li>
-          <li>5 项指标以 0 表示缺失，训练时中位数插补</li>
+          <li>Kaggle 公开数据，10 万条 EHR 衍生记录</li>
+          <li>清洗后 79,334 例：女性 47,892 / 男性 31,442</li>
+          <li>患病率 10.5%，女性 9.1% / 男性 12.7%</li>
+          <li>去重、限 18 岁以上，剔除性别 Other 18 条</li>
         </ul>
       </article>
 
@@ -223,9 +240,9 @@
         <h3>模型与评估</h3>
         <p class="info-card__lead">L2 正则逻辑回归（λ = 1e-4）</p>
         <ul class="ticks">
-          <li>测试集 AUC 0.806，Brier 分数 0.164</li>
-          <li>阈值 0.5：敏感度 0.574 / 特异度 0.880</li>
-          <li>即超过四成患者会被漏掉——这正是要调阈值的原因</li>
+          <li>测试集 AUC 0.956，Brier 分数 0.039</li>
+          <li>阈值 0.5：敏感度 65.0% / 特异度 98.8%</li>
+          <li>即仍有 35% 的患者被漏掉——这正是要调阈值的原因</li>
           <li>系数内联在页面里，推理完全在浏览器完成</li>
         </ul>
       </article>
@@ -236,10 +253,10 @@
         </span>
         <h3>局限与伦理</h3>
         <ul class="ticks">
-          <li>单一族群、仅女性、样本仅 768 例</li>
-          <li>数据年代久远，采集标准与今日不同</li>
+          <li>公开 EHR 衍生数据，非前瞻性临床队列</li>
+          <li>不含怀孕等女性专属变量，无法演示性别专属字段</li>
+          <li>性别仅二分；Other 仅 18 条，已剔除</li>
           <li>未做外部验证与概率校准，不可用于临床</li>
-          <li>概率是群体统计，不等于个体诊断</li>
           <li>教学演示，不构成任何医疗建议</li>
         </ul>
       </article>
@@ -250,7 +267,7 @@
 <footer class="footer">
   <div class="shell footer__inner">
     <p class="footer__brand">糖尿病风险 · 决策阈值实验室</p>
-    <p class="footer__meta">医学人工智能导论课程项目 · 数据：Pima Indians Diabetes Database (NIDDK / UCI) · 代码以 MIT 许可开源</p>
+    <p class="footer__meta">医学人工智能导论课程项目 · 数据：Diabetes Prediction Dataset (Kaggle) · 代码以 MIT 许可开源</p>
   </div>
 </footer>
 

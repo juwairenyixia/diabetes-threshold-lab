@@ -7,64 +7,102 @@
 
   const D = window.DIABETES_MODEL;
   const FEATURES = D.features;
+  const META = D.meta;
+  const W = D.model.weights;
+  const MEANS = D.model.means;
+  const SDS = D.model.sds;
   const B0 = D.model.intercept;
-  const COEF = D.model.coef;
-  const TEST = D.testScores;
-  const N_TEST = TEST.length;
-  const IMPUTED = new Set(D.meta.imputedFeatures);
+  const TEST = D.testScores; // [概率, 真实标签, 性别]
+  const N = TEST.length;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const $ = (id) => document.getElementById(id);
 
   /* ---------------- 状态 ---------------- */
   const state = {
-    values: Object.fromEntries(FEATURES.map((f) => [f.key, f.median])),
+    values: Object.fromEntries(FEATURES.map((f) => [f.key, f.default])),
     threshold: 0.5,
     cost: 5,
-    preset: -1,
+    preset: null,
   };
 
   /* ---------------- 数学 ---------------- */
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const sigmoid = (z) => 1 / (1 + Math.exp(-clamp(z, -35, 35)));
-  const medianOf = (key) => FEATURES.find((f) => f.key === key).median;
 
-  function imputedValue(key, raw) {
-    return IMPUTED.has(key) && raw === 0 ? medianOf(key) : raw;
+  function weightOf(f, v) {
+    if (f.type === "select") {
+      const opt = f.options.find((o) => o.value === v);
+      return opt && opt.term ? (W[opt.term] || 0) : 0;
+    }
+    return W[f.key] || 0;
   }
 
-  function predict(values) {
+  function encodedOf(f, v) {
+    switch (f.type) {
+      case "range": return (Number(v) - MEANS[f.key]) / SDS[f.key];
+      case "toggle": return v ? 1 : 0;
+      case "segment": return Number(v);
+      case "select": {
+        const opt = f.options.find((o) => o.value === v);
+        return opt && opt.term ? 1 : 0;
+      }
+      default: return 0;
+    }
+  }
+
+  function contributionOf(f, v) {
+    return weightOf(f, v) * encodedOf(f, v);
+  }
+
+  function predict() {
     let eta = B0;
-    FEATURES.forEach((f, i) => {
-      eta += COEF[i] * ((imputedValue(f.key, values[f.key]) - f.mean) / f.sd);
-    });
+    FEATURES.forEach((f) => { eta += contributionOf(f, state.values[f.key]); });
     return { p: sigmoid(eta), eta };
   }
 
-  function contributions(values) {
-    return FEATURES.map((f, i) => ({
-      key: f.key,
-      label: f.label,
-      value: COEF[i] * ((imputedValue(f.key, values[f.key]) - f.mean) / f.sd),
-    }));
+  /* ---------------- 测试集索引（二分查找） ---------------- */
+  const SORTED = TEST.slice().sort((a, b) => a[0] - b[0]);
+  const PROBS = Float64Array.from(SORTED, (s) => s[0]);
+  const POS_PREFIX = new Int32Array(N + 1);
+  for (let i = 0; i < N; i++) {
+    POS_PREFIX[i + 1] = POS_PREFIX[i] + (SORTED[i][1] === 1 ? 1 : 0);
+  }
+  const TOTAL_POS = POS_PREFIX[N];
+  const TOTAL_NEG = N - TOTAL_POS;
+
+  function lowerBound(arr, x) {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (arr[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
 
   function statsAt(t) {
-    let tp = 0, fp = 0, fn = 0, tn = 0;
-    for (const [p, y] of TEST) {
-      const hit = p >= t;
-      if (y === 1) { if (hit) tp++; else fn++; }
-      else { if (hit) fp++; else tn++; }
-    }
+    const k = lowerBound(PROBS, t);
+    const posBelow = POS_PREFIX[k];
+    const negBelow = k - posBelow;
+    const tp = TOTAL_POS - posBelow;
+    const fn = posBelow;
+    const tn = negBelow;
+    const fp = TOTAL_NEG - negBelow;
     return {
       tp, fp, fn, tn,
       sensitivity: tp + fn ? tp / (tp + fn) : 0,
       specificity: tn + fp ? tn / (tn + fp) : 0,
       ppv: tp + fp ? tp / (tp + fp) : 0,
       npv: tn + fn ? tn / (tn + fn) : 0,
-      accuracy: (tp + tn) / N_TEST,
+      accuracy: (tp + tn) / N,
     };
   }
+
+  const SEX_PROBS = { 0: [], 1: [] };
+  TEST.forEach(([p, , s]) => { SEX_PROBS[s].push(p); });
+  SEX_PROBS[0].sort((a, b) => a - b);
+  SEX_PROBS[1].sort((a, b) => a - b);
 
   /* ---------------- 数字补间 ---------------- */
   const tweens = new Map();
@@ -98,10 +136,17 @@
   const DIST = { w: 440, h: 208, l: 30, r: 10, t: 12, b: 30 };
   const COST = { w: 440, h: 208, l: 38, r: 12, t: 14, b: 30 };
 
-  function rocPath() {
-    return D.roc
-      .map(([f, t], i) => `${i ? "L" : "M"}${(ROCPAD.l + f * ROCW).toFixed(2)} ${(ROC_BOTTOM - t * ROCH).toFixed(2)}`)
-      .join(" ");
+  function rocPoints() {
+    let tp = 0, fp = 0;
+    const pts = [[0, 0]];
+    const step = Math.max(1, Math.floor(N / 320));
+    for (let i = 0; i < N; i++) {
+      if (SORTED[i][1] === 1) tp++;
+      else fp++;
+      if ((i + 1) % step === 0) pts.push([fp / TOTAL_NEG, tp / TOTAL_POS]);
+    }
+    pts.push([1, 1]);
+    return pts;
   }
 
   /* ============================================================
@@ -136,13 +181,15 @@
   function renderGauge(p) {
     $("gaugeArc").style.strokeDasharray = `${clamp(p, 0, 1) * 100} 100`;
     $("gaugeKnob").style.transform = `rotate(${-90 + clamp(p, 0, 1) * 180}deg)`;
-    tween($("gaugeNum"), Math.round(p * 100), (v) => String(Math.round(v)));
+    const shown = Math.round(p * 1000) / 10;
+    tween($("gaugeNum"), shown, (v) => (v < 10 ? v.toFixed(1) : String(Math.round(v))));
   }
 
   /* ============================================================
      ROC
      ============================================================ */
   function buildROC() {
+    const pts = rocPoints();
     const grid = [0, 0.25, 0.5, 0.75, 1].map((v) => {
       const x = ROCPAD.l + v * ROCW;
       const y = ROC_BOTTOM - v * ROCH;
@@ -159,11 +206,12 @@
         <text x="${ROCPAD.l - 9}" y="${y + 3.5}" text-anchor="end" fill="#93a4b5" font-size="10">${v.toFixed(1)}</text>`;
     }).join("");
 
-    const pts = D.roc.map(([f, t]) => [ROCPAD.l + f * ROCW, ROC_BOTTOM - t * ROCH]);
+    const mapped = pts.map(([f, t]) => [ROCPAD.l + f * ROCW, ROC_BOTTOM - t * ROCH]);
     const areaPath =
       `M ${ROCPAD.l} ${ROC_BOTTOM} ` +
-      pts.map(([x, y]) => `L${x.toFixed(2)} ${y.toFixed(2)}`).join(" ") +
+      mapped.map(([x, y]) => `L${x.toFixed(2)} ${y.toFixed(2)}`).join(" ") +
       ` L ${ROCPAD.l + ROCW} ${ROC_BOTTOM} Z`;
+    const linePath = mapped.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`).join(" ");
 
     $("rocChart").innerHTML = `
       <svg viewBox="0 0 ${ROC_W} ${ROC_H}" role="img" aria-label="ROC 曲线，当前阈值工作点">
@@ -178,7 +226,7 @@
         <line x1="${ROCPAD.l}" y1="${ROC_BOTTOM}" x2="${ROCPAD.l + ROCW}" y2="${ROCPAD.t}"
               stroke="#c9d6e4" stroke-width="1" stroke-dasharray="4 5"/>
         <path d="${areaPath}" fill="url(#rocFill)"/>
-        <path d="${rocPath()}" fill="none" stroke="#0f8d88" stroke-width="2.2"
+        <path d="${linePath}" fill="none" stroke="#0f8d88" stroke-width="2.2"
               stroke-linejoin="round" stroke-linecap="round"/>
         <line id="rocCrossX" x1="0" y1="0" x2="0" y2="0" stroke="#0c1a28" stroke-width="1"
               stroke-dasharray="3 4" opacity="0.28"/>
@@ -269,7 +317,8 @@
     const pw = w - l - r;
     const ph = h - t - b;
     const bw = pw / BINS;
-    const yv = (v) => t + ph - (v / distMax) * ph;
+    const logTop = Math.max(1, Math.log10(distMax));
+    const yv = (v) => t + ph - (Math.log10(Math.max(1, v)) / logTop) * ph;
 
     let bars = "";
     distBins.forEach((bin, i) => {
@@ -283,16 +332,18 @@
                  height="${(t + ph - yv(bin.pos)).toFixed(1)}" rx="1.5" fill="#d9485f"/>`;
     });
 
-    const ticks = [0, Math.round(distMax / 2), distMax];
+    const ticks = [];
+    for (let v = 1; v <= distMax; v *= 10) ticks.push(v);
+    const tickLabel = (v) => (v >= 1000 ? `${v / 1000}k` : String(v));
     const gridLines = ticks.map((v) => `
       <line x1="${l}" y1="${yv(v).toFixed(1)}" x2="${l + pw}" y2="${yv(v).toFixed(1)}" stroke="#eef3f8"/>
-      <text x="${l - 7}" y="${(yv(v) + 3.5).toFixed(1)}" text-anchor="end" fill="#a7b6c5" font-size="9.5">${v}</text>`).join("");
+      <text x="${l - 7}" y="${(yv(v) + 3.5).toFixed(1)}" text-anchor="end" fill="#a7b6c5" font-size="9.5">${tickLabel(v)}</text>`).join("");
 
     const xTicks = [0, 0.5, 1].map((v) => `
       <text x="${(l + v * pw).toFixed(1)}" y="${h - 9}" text-anchor="middle" fill="#a7b6c5" font-size="9.5">${v.toFixed(1)}</text>`).join("");
 
     $("distChart").innerHTML = `
-      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="测试集预测概率分布，按真实结局分组">
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="测试集预测概率分布，按真实结局分组，纵轴为对数刻度">
         ${gridLines}${bars}${xTicks}
         <line id="distThr" x1="0" y1="${t}" x2="0" y2="${t + ph}" stroke="#0c1a28" stroke-width="1.5"
               stroke-dasharray="4 4" opacity="0.55"/>
@@ -317,7 +368,7 @@
   function costPoints(ratio) {
     return THRESHOLDS.map((t) => {
       const s = statsAt(t);
-      return [t, ((s.fn * ratio + s.fp) / N_TEST) * 100];
+      return [t, ((s.fn * ratio + s.fp) / N) * 100];
     });
   }
 
@@ -360,7 +411,7 @@
     $("costThr").setAttribute("x2", cx);
 
     const nowStats = statsAt(tNow);
-    const nowCost = ((nowStats.fn * ratio + nowStats.fp) / N_TEST) * 100;
+    const nowCost = ((nowStats.fn * ratio + nowStats.fp) / N) * 100;
     const nowDot = $("costNowDot");
     nowDot.setAttribute("cx", cx);
     nowDot.setAttribute("cy", y(nowCost));
@@ -368,14 +419,14 @@
     const optStats = statsAt(tOpt);
     const optDot = $("costOptDot");
     optDot.setAttribute("cx", x(tOpt));
-    optDot.setAttribute("cy", y(((optStats.fn * ratio + optStats.fp) / N_TEST) * 100));
+    optDot.setAttribute("cy", y(((optStats.fn * ratio + optStats.fp) / N) * 100));
 
     $("costNow").textContent = `当前阈值每 100 人总代价 ${nowCost.toFixed(1)}`;
     $("optThr").textContent = tOpt.toFixed(2);
   }
 
   /* ============================================================
-     指标滑杆
+     表单
      ============================================================ */
   const decimals = (f) => (f.step < 1 ? (String(f.step).split(".")[1] || "").length : 0);
 
@@ -383,54 +434,181 @@
     return decimals(f) ? Number(v).toFixed(decimals(f)) : String(Math.round(v));
   }
 
-  function buildSliders() {
-    $("sliders").innerHTML = FEATURES.map((f) => `
-      <div class="slider">
+  function rangeHTML(f) {
+    return `
+      <div class="slider" data-key="${f.key}">
         <div class="slider__top">
           <label class="slider__label" for="in-${f.key}">${f.label}<span class="slider__unit">${f.unit || ""}</span></label>
           <span class="slider__value" id="val-${f.key}"></span>
         </div>
-        <input type="range" id="in-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}"
-               value="${f.median}" data-key="${f.key}">
-      </div>`).join("");
+        <div class="slider__rail">
+          <input type="range" id="in-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}"
+                 value="${f.default}" data-key="${f.key}">
+          <output class="slider__bubble" for="in-${f.key}"></output>
+        </div>
+      </div>`;
+  }
+
+  function toggleHTML(f) {
+    return `
+      <div class="field-row">
+        <div class="field-row__text">
+          <span class="field-row__label">${f.label}</span>
+          ${f.hint ? `<span class="field-row__hint">${f.hint}</span>` : ""}
+        </div>
+        <button type="button" class="switch" role="switch" aria-checked="false"
+                aria-label="${f.label}" data-key="${f.key}"><span></span></button>
+      </div>`;
+  }
+
+  function selectHTML(f) {
+    return `
+      <div class="field-row">
+        <div class="field-row__text"><span class="field-row__label">${f.label}</span></div>
+        <select class="select" id="in-${f.key}" data-key="${f.key}" aria-label="${f.label}">
+          ${f.options.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
+        </select>
+      </div>`;
+  }
+
+  function buildForm() {
+    $("sliders").innerHTML = FEATURES
+      .filter((f) => f.type !== "segment")
+      .map((f) => (f.type === "range" ? rangeHTML(f) : f.type === "toggle" ? toggleHTML(f) : selectHTML(f)))
+      .join("");
 
     FEATURES.forEach((f) => {
-      const input = $(`in-${f.key}`);
-      input.addEventListener("input", () => {
-        state.values[f.key] = Number(input.value);
-        state.preset = -1;
-        syncPresetUI();
-        render();
-      });
+      if (f.type === "range") {
+        const input = $(`in-${f.key}`);
+        input.addEventListener("input", () => {
+          state.values[f.key] = Number(input.value);
+          state.preset = null;
+          syncPresetUI();
+          syncRange(f);
+          render();
+        });
+        input.addEventListener("pointerdown", () => input.closest(".slider").classList.add("is-dragging"));
+        input.addEventListener("pointerup", () => input.closest(".slider").classList.remove("is-dragging"));
+        input.addEventListener("pointercancel", () => input.closest(".slider").classList.remove("is-dragging"));
+        input.addEventListener("blur", () => input.closest(".slider").classList.remove("is-dragging"));
+      } else if (f.type === "toggle") {
+        const btn = $("sliders").querySelector(`.switch[data-key="${f.key}"]`);
+        btn.addEventListener("click", () => {
+          state.values[f.key] = state.values[f.key] ? 0 : 1;
+          state.preset = null;
+          syncPresetUI();
+          syncToggle(f);
+          render();
+        });
+      } else if (f.type === "select") {
+        const sel = $(`in-${f.key}`);
+        sel.addEventListener("change", () => {
+          state.values[f.key] = sel.value;
+          state.preset = null;
+          syncPresetUI();
+          render();
+        });
+      }
     });
   }
 
-  function syncSliders() {
+  function syncRange(f) {
+    const input = $(`in-${f.key}`);
+    const v = Number(state.values[f.key]);
+    input.value = v;
+    const pct = clamp(((v - f.min) / (f.max - f.min)) * 100, 0, 100);
+    input.style.setProperty("--fill", `${pct}%`);
+    const text = fmtValue(f, v);
+    $(`val-${f.key}`).textContent = text;
+    const row = input.closest(".slider");
+    const bubble = row.querySelector(".slider__bubble");
+    bubble.textContent = text;
+    bubble.style.left = `${pct}%`;
+  }
+
+  function syncToggle(f) {
+    const btn = $("sliders").querySelector(`.switch[data-key="${f.key}"]`);
+    const on = !!Number(state.values[f.key]);
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+  }
+
+  function syncForm() {
     FEATURES.forEach((f) => {
-      const input = $(`in-${f.key}`);
-      const v = state.values[f.key];
-      input.value = v;
-      const fill = ((v - f.min) / (f.max - f.min)) * 100;
-      input.style.setProperty("--fill", `${clamp(fill, 0, 100)}%`);
-      const badge = $(`val-${f.key}`);
-      badge.textContent = fmtValue(f, v);
-      const isMissing = IMPUTED.has(f.key) && Number(v) === 0;
-      badge.classList.toggle("is-zero", isMissing);
-      badge.title = isMissing ? "将按中位数插补" : "";
+      if (f.type === "range") syncRange(f);
+      else if (f.type === "toggle") syncToggle(f);
+      else if (f.type === "select") $(`in-${f.key}`).value = state.values[f.key];
+    });
+
+    document.querySelectorAll("#sexField .segment__opt").forEach((btn) => {
+      const on = Number(btn.dataset.value) === Number(state.values.sex);
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+
+    const isMale = Number(state.values.sex) === 1;
+    const s = isMale ? META.sexStats.male : META.sexStats.female;
+    $("sexHint").textContent = `${isMale ? "男性" : "女性"} · 患病率 ${(s.prevalence * 100).toFixed(1)}%（${s.n.toLocaleString("zh-CN")} 人）`;
+  }
+
+  /* ============================================================
+     示例病例
+     ============================================================ */
+  function presetKey() {
+    return Number(state.values.sex) === 1 ? "male" : "female";
+  }
+
+  function applyPreset(tier) {
+    const c = D.presets[presetKey()][tier];
+    if (!c) return;
+    Object.keys(state.values).forEach((k) => {
+      if (k in c) state.values[k] = c[k];
+    });
+    state.preset = tier;
+    syncForm();
+    syncPresetUI();
+    render();
+  }
+
+  function buildPresets() {
+    const buttons = [
+      { label: "低风险", tier: "low" },
+      { label: "高风险", tier: "high" },
+    ];
+    $("presets").innerHTML = buttons
+      .map((b) => `<button class="preset" type="button" data-tier="${b.tier}">${b.label}</button>`)
+      .join("");
+
+    $("presets").addEventListener("click", (e) => {
+      const btn = e.target.closest(".preset");
+      if (!btn) return;
+      applyPreset(btn.dataset.tier);
     });
   }
 
   function syncPresetUI() {
     document.querySelectorAll(".preset").forEach((b) => {
-      b.classList.toggle("is-active", Number(b.dataset.index) === state.preset);
+      b.classList.toggle("is-active", b.dataset.tier === state.preset);
+    });
+  }
+
+  function buildSex() {
+    $("sexField").addEventListener("click", (e) => {
+      const btn = e.target.closest(".segment__opt");
+      if (!btn) return;
+      const next = Number(btn.dataset.value);
+      if (next === Number(state.values.sex)) return;
+      state.values.sex = next;
+      if (state.preset) applyPreset(state.preset);
+      else { syncForm(); render(); }
     });
   }
 
   /* ============================================================
-     渲染主流程
+     渲染
      ============================================================ */
   function render() {
-    const { p } = predict(state.values);
+    const { p } = predict();
     const s = statsAt(state.threshold);
     const opt = optThreshold();
 
@@ -440,13 +618,15 @@
     renderDist(state.threshold);
     renderCost(state.cost, state.threshold, opt);
 
-    const band = p < 0.3 ? ["low", "低风险"] : p < 0.6 ? ["mid", "中等风险"] : ["high", "高风险"];
+    const band = p < 0.1 ? ["low", "低风险"] : p < 0.3 ? ["mid", "中等风险"] : ["high", "高风险"];
     const bandEl = $("band");
     bandEl.className = `band band--${band[0]}`;
     bandEl.textContent = band[1];
 
-    const below = TEST.filter(([q]) => q < p).length;
-    $("percentile").innerHTML = `高于测试集 <b>${Math.round((below / N_TEST) * 100)}%</b> 的样本`;
+    const sex = Number(state.values.sex);
+    const pool = SEX_PROBS[sex];
+    const below = lowerBound(pool, p);
+    $("percentile").innerHTML = `高于同性别测试人群 <b>${Math.round((below / pool.length) * 100)}%</b>`;
 
     const positive = p >= state.threshold;
     const verdict = $("verdict");
@@ -454,8 +634,8 @@
     verdict.textContent = `阈值 ${state.threshold.toFixed(2)}：判为${positive ? "阳性 → 建议进一步检查" : "阴性 → 暂不提示"}`;
 
     const truth = $("truth");
-    if (state.preset >= 0) {
-      const c = D.presets[state.preset];
+    if (state.preset) {
+      const c = D.presets[presetKey()][state.preset];
       truth.hidden = false;
       truth.textContent = `示例病例的真实结局：${c._outcome === 1 ? "患糖尿病" : "未患糖尿病"}`;
     } else {
@@ -466,9 +646,17 @@
   }
 
   function renderContrib() {
-    const list = contributions(state.values);
+    const list = FEATURES.map((f) => ({
+      key: f.key,
+      label: f.label,
+      value: contributionOf(f, state.values[f.key]),
+    }));
     const maxAbs = Math.max(...list.map((c) => Math.abs(c.value)), 0.35);
+    const hasNeg = list.some((c) => c.value < -0.02);
+    const hasPos = list.some((c) => c.value > 0.02);
+    const base = hasNeg && hasPos ? 50 : hasPos ? 0 : 100;
     const container = $("contribChart");
+    container.style.setProperty("--base", `${base}%`);
 
     if (!container.children.length) {
       container.innerHTML = list.map((c) => `
@@ -484,14 +672,15 @@
     list.forEach((c) => {
       const bar = container.querySelector(`.contrib-row__bar[data-key="${c.key}"]`);
       const val = container.querySelector(`.contrib-row__val[data-key="${c.key}"]`);
-      const ratio = Math.min(Math.abs(c.value) / maxAbs, 1) * 50;
+      const span = c.value >= 0 ? 100 - base : base;
+      const ratio = Math.min(Math.abs(c.value) / maxAbs, 1) * span;
       bar.className = `contrib-row__bar ${c.value >= 0 ? "pos" : "neg"}`;
       bar.style.width = `${ratio}%`;
       val.textContent = `${c.value >= 0 ? "+" : "−"}${Math.abs(c.value).toFixed(2)}`;
       val.className = `contrib-row__val ${c.value >= 0 ? "" : "neg"}`;
     });
 
-    const sum = list.reduce((s, c) => s + c.value, 0);
+    const sum = list.reduce((acc, c) => acc + c.value, 0);
     const eta = B0 + sum;
     const signed = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
     $("logitBase").textContent = signed(B0);
@@ -539,9 +728,9 @@
     });
 
     $("resetBtn").addEventListener("click", () => {
-      FEATURES.forEach((f) => { state.values[f.key] = f.median; });
-      state.preset = -1;
-      syncSliders();
+      FEATURES.forEach((f) => { state.values[f.key] = f.default; });
+      state.preset = null;
+      syncForm();
       syncPresetUI();
       render();
     });
@@ -551,58 +740,21 @@
   }
 
   /* ============================================================
-     示例病例
-     ============================================================ */
-  function buildPresets() {
-    const sorted = D.presets
-      .map((c, i) => ({ c, i, p: c._probability }))
-      .sort((a, b) => a.p - b.p);
-    const low = sorted[0].i;
-    const high = sorted[sorted.length - 1].i;
-    const mid = sorted.reduce((best, cur) => (Math.abs(cur.p - 0.5) < Math.abs(best.p - 0.5) ? cur : best), sorted[0]).i;
-
-    const buttons = [
-      { label: "低风险", index: low },
-      { label: "临界", index: mid },
-      { label: "高风险", index: high },
-      { label: "换一例", index: -2 },
-    ];
-
-    $("presets").innerHTML = buttons
-      .map((b) => `<button class="preset" type="button" data-index="${b.index}">${b.label}</button>`)
-      .join("");
-
-    $("presets").addEventListener("click", (e) => {
-      const btn = e.target.closest(".preset");
-      if (!btn) return;
-      let idx = Number(btn.dataset.index);
-      if (idx === -2) {
-        const pool = D.presets.map((_, i) => i).filter((i) => i !== state.preset);
-        idx = pool[Math.floor(Math.random() * pool.length)];
-      }
-      if (!D.presets[idx]) return;
-      state.preset = idx;
-      Object.keys(state.values).forEach((k) => { state.values[k] = D.presets[idx][k]; });
-      syncSliders();
-      syncPresetUI();
-      render();
-    });
-  }
-
-  /* ============================================================
      初始化
      ============================================================ */
   function init() {
-    $("aucVal").textContent = D.meta.auc.toFixed(3);
+    $("aucVal").textContent = META.auc.toFixed(3);
     buildGauge();
     buildROC();
     buildMatrix();
     buildDist();
     buildCost();
-    buildSliders();
+    buildForm();
     buildPresets();
+    buildSex();
     buildControls();
-    syncSliders();
+    syncForm();
+    syncPresetUI();
     render();
   }
 

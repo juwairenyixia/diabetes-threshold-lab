@@ -1,8 +1,8 @@
 """
-训练 Pima Indians Diabetes 逻辑回归模型，导出前端可直接使用的模型资产。
+训练混合性别糖尿病风险模型（逻辑回归），导出前端可直接使用的资产。
 
-不依赖 numpy / sklearn：纯标准库实现 IRLS（牛顿法）求解逻辑回归，
-保证在任何只装了 Python 的机器上都能复现。
+数据：Diabetes Prediction Dataset（Kaggle，10 万条 EHR 衍生记录）
+不依赖 numpy / sklearn：纯标准库实现 IRLS（牛顿法）。
 
 用法：python scripts/train.py
 输出：assets/js/data.js
@@ -16,34 +16,23 @@ import statistics
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CSV_PATH = ROOT / "data" / "pima.csv"
+CSV_PATH = ROOT / "data" / "diabetes_prediction.csv"
 OUT_PATH = ROOT / "assets" / "js" / "data.js"
 
-FEATURES = [
-    # key, 中文名, 单位, 滑块下限, 上限, 步长, 缺失值说明
-    ("Pregnancies", "怀孕次数", "次", 0, 17, 1, None),
-    ("Glucose", "血浆葡萄糖", "mg/dL", 40, 200, 1, "0 表示未测量"),
-    ("BloodPressure", "舒张压", "mmHg", 30, 120, 1, "0 表示未测量"),
-    ("SkinThickness", "三头肌皮褶厚度", "mm", 0, 60, 1, "0 表示未测量"),
-    ("Insulin", "血清胰岛素", "μU/mL", 0, 400, 5, "0 表示未测量"),
-    ("BMI", "体质指数", "kg/m²", 15, 55, 0.1, "0 表示未测量"),
-    ("DiabetesPedigreeFunction", "家族史评分", "", 0.05, 2.5, 0.01, None),
-    ("Age", "年龄", "岁", 18, 90, 1, None),
-]
-ZERO_AS_MISSING = {"Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI"}
 SEED = 42
 TEST_RATIO = 0.2
 L2 = 1e-4
 
-
-def load_rows():
-    rows = []
-    with CSV_PATH.open(newline="", encoding="utf-8") as f:
-        for raw in csv.DictReader(f):
-            row = {k: float(v) for k, v in raw.items() if k != "Outcome"}
-            row["Outcome"] = int(float(raw["Outcome"]))
-            rows.append(row)
-    return rows
+SMOKING = [
+    ("never", "从不吸烟", None),
+    ("former", "已戒烟", "smoking_former"),
+    ("current", "目前吸烟", "smoking_current"),
+    ("not current", "目前未吸烟", "smoking_not_current"),
+    ("ever", "曾经吸烟", "smoking_ever"),
+    ("No Info", "不详", "smoking_noinfo"),
+]
+CONT = ["age", "bmi", "hba1c", "glucose"]
+BINARY = ["hypertension", "heart"]
 
 
 def sigmoid(z):
@@ -74,8 +63,7 @@ def solve(a, b):
     return [m[i][n] for i in range(n)]
 
 
-def fit_logistic(x, y, l2=L2, iters=60):
-    """IRLS 拟合逻辑回归，返回 [b0, b1, ..., bd]。"""
+def fit_logistic(x, y, l2=L2, iters=40):
     n = len(x)
     d = len(x[0])
     beta = [0.0] * (d + 1)
@@ -83,20 +71,21 @@ def fit_logistic(x, y, l2=L2, iters=60):
         grad = [0.0] * (d + 1)
         hess = [[0.0] * (d + 1) for _ in range(d + 1)]
         for i in range(n):
-            eta = beta[0] + sum(beta[j + 1] * x[i][j] for j in range(d))
+            row = x[i]
+            eta = beta[0] + sum(beta[j + 1] * row[j] for j in range(d))
             p = sigmoid(eta)
             w = p * (1.0 - p)
             r = y[i] - p
             grad[0] += r
             hess[0][0] += w
             for j in range(d):
-                grad[j + 1] += r * x[i][j]
-                hess[0][j + 1] += w * x[i][j]
+                xj = row[j]
+                grad[j + 1] += r * xj
+                hess[0][j + 1] += w * xj
                 hess[j + 1][0] = hess[0][j + 1]
                 for k in range(j + 1):
-                    hess[j + 1][k + 1] += w * x[i][j] * x[i][k]
+                    hess[j + 1][k + 1] += w * xj * row[k]
                     hess[k + 1][j + 1] = hess[j + 1][k + 1]
-        # L2 只作用于特征系数，不惩罚截距
         for j in range(1, d + 1):
             grad[j] -= l2 * beta[j]
             hess[j][j] += l2
@@ -107,25 +96,22 @@ def fit_logistic(x, y, l2=L2, iters=60):
     return beta
 
 
-def roc_curve(pairs):
-    """pairs: [(p, y)] -> [(fpr, tpr)], AUC。"""
+def auc_of(pairs):
     pairs = sorted(pairs, key=lambda t: -t[0])
     pos = sum(y for _, y in pairs)
     neg = len(pairs) - pos
     tp = fp = 0
-    pts = [(0.0, 0.0)]
     auc = 0.0
-    prev_fpr, prev_tpr = 0.0, 0.0
-    for p, y in pairs:
+    prev_fpr = prev_tpr = 0.0
+    for _, y in pairs:
         if y == 1:
             tp += 1
         else:
             fp += 1
         fpr, tpr = fp / neg, tp / pos
         auc += (fpr - prev_fpr) * (tpr + prev_tpr) / 2.0
-        pts.append((fpr, tpr))
         prev_fpr, prev_tpr = fpr, tpr
-    return pts, auc
+    return auc
 
 
 def stats_at(pairs, thr):
@@ -147,14 +133,46 @@ def stats_at(pairs, thr):
     }
 
 
+def load_rows():
+    rows = []
+    with CSV_PATH.open(newline="", encoding="utf-8") as f:
+        for raw in csv.DictReader(f):
+            if raw["gender"] not in ("Female", "Male"):
+                continue
+            age = float(raw["age"])
+            bmi = float(raw["bmi"])
+            if age < 18 or bmi < 10 or bmi > 60:
+                continue
+            rows.append({
+                "sex": 0 if raw["gender"] == "Female" else 1,
+                "age": age,
+                "bmi": bmi,
+                "hba1c": float(raw["HbA1c_level"]),
+                "glucose": float(raw["blood_glucose_level"]),
+                "hypertension": int(raw["hypertension"]),
+                "heart": int(raw["heart_disease"]),
+                "smoking": raw["smoking_history"],
+                "y": int(raw["diabetes"]),
+            })
+    n_before = len(rows)
+    seen = set()
+    uniq = []
+    for r in rows:
+        key = (r["sex"], r["age"], r["bmi"], r["hba1c"], r["glucose"],
+               r["hypertension"], r["heart"], r["smoking"], r["y"])
+        if key not in seen:
+            seen.add(key)
+            uniq.append(r)
+    return uniq, n_before - len(uniq)
+
+
 def main():
-    rows = load_rows()
+    rows, n_dups = load_rows()
     n = len(rows)
 
-    # 1. 分层切分
     rng = random.Random(SEED)
-    pos = [i for i, r in enumerate(rows) if r["Outcome"] == 1]
-    neg = [i for i, r in enumerate(rows) if r["Outcome"] == 0]
+    pos = [i for i, r in enumerate(rows) if r["y"] == 1]
+    neg = [i for i, r in enumerate(rows) if r["y"] == 0]
     rng.shuffle(pos)
     rng.shuffle(neg)
     n_pos_test = round(len(pos) * TEST_RATIO)
@@ -163,106 +181,139 @@ def main():
     train_idx = [i for i in range(n) if i not in test_idx]
     test_sorted = sorted(test_idx)
 
-    # 2. 训练集上统计缺失处理与标准化参数
-    medians, zero_counts = {}, {}
-    for key, *_ in FEATURES:
-        vals = [rows[i][key] for i in train_idx]
-        if key in ZERO_AS_MISSING:
-            zero_counts[key] = sum(1 for v in vals if v == 0)
-            vals = [v for v in vals if v != 0] or [0.0]
-        medians[key] = statistics.median(vals)
+    means = {k: statistics.fmean(rows[i][k] for i in train_idx) for k in CONT}
+    sds = {k: statistics.pstdev([rows[i][k] for i in train_idx]) or 1.0 for k in CONT}
 
-    def impute(row):
-        return [
-            row[key] if not (key in ZERO_AS_MISSING and row[key] == 0) else medians[key]
-            for key, *_ in FEATURES
-        ]
+    def encode(r):
+        v = [r["sex"]]
+        v += [(r[k] - means[k]) / sds[k] for k in CONT]
+        v += [r[k] for k in BINARY]
+        for key, _, term in SMOKING:
+            if term:
+                v.append(1.0 if r["smoking"] == key else 0.0)
+        return v
 
-    x_train = [impute(rows[i]) for i in train_idx]
-    y_train = [rows[i]["Outcome"] for i in train_idx]
-    means = [statistics.fmean(col) for col in zip(*x_train)]
-    sds = [statistics.pstdev(col) or 1.0 for col in zip(*x_train)]
+    x_train = [encode(rows[i]) for i in train_idx]
+    y_train = [rows[i]["y"] for i in train_idx]
+    beta = fit_logistic(x_train, y_train)
+    weights = dict(zip(
+        ["sex"] + CONT + BINARY + [term for _, _, term in SMOKING if term],
+        beta[1:],
+    ))
 
-    def standardize(xs):
-        return [[(v - means[j]) / sds[j] for j, v in enumerate(row)] for row in xs]
-
-    x_train_z = standardize(x_train)
-    beta = fit_logistic(x_train_z, y_train)
-
-    def predict(x):
-        row = impute(x)
-        z = [(v - means[j]) / sds[j] for j, v in enumerate(row)]
-        eta = beta[0] + sum(beta[j + 1] * z[j] for j in range(len(z)))
+    def predict(r):
+        eta = beta[0] + sum(w * v for w, v in zip(beta[1:], encode(r)))
         return sigmoid(eta)
 
-    # 3. 测试集
-    test_pairs = [(predict(rows[i]), rows[i]["Outcome"]) for i in test_sorted]
-    roc, auc = roc_curve(test_pairs)
-    at50 = stats_at(test_pairs, 0.5)
+    test_pairs = [(predict(rows[i]), rows[i]["y"]) for i in test_sorted]
+    auc = auc_of(test_pairs)
     brier = statistics.fmean((p - y) ** 2 for p, y in test_pairs)
+    at50 = stats_at(test_pairs, 0.5)
 
-    # 4. 页面示例病例（取自测试集，覆盖不同风险区间，保留真实结局用于教学）
-    presets, used = [], set()
-    for target in (0.05, 0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 0.97):
+    def pick(sex, target):
         best = None
-        for i, (p, _) in zip(test_sorted, test_pairs):
-            if i in used:
+        for i, (p, y) in zip(test_sorted, test_pairs):
+            r = rows[i]
+            if r["sex"] != sex:
+                continue
+            if not (18 <= r["age"] <= 80 and 15 <= r["bmi"] <= 55):
                 continue
             score = abs(p - target)
             if best is None or score < best[0]:
                 best = (score, p, i)
-        _, p, i = best
-        used.add(i)
-        case = {key: round(rows[i][key], 2) for key, *_ in FEATURES}
-        case["_probability"] = round(p, 4)
-        case["_outcome"] = rows[i]["Outcome"]
-        presets.append(case)
+        return best
 
-    # 5. 组装导出
+    presets = {"female": {}, "male": {}}
+    for sex, label in ((0, "female"), (1, "male")):
+        for tier, target in (("low", 0.01), ("high", 0.95)):
+            _, p, i = pick(sex, target)
+            r = rows[i]
+            presets[label][tier] = {
+                "sex": r["sex"], "age": r["age"], "bmi": round(r["bmi"], 1),
+                "hba1c": round(r["hba1c"], 1), "glucose": r["glucose"],
+                "hypertension": r["hypertension"], "heart": r["heart"],
+                "smoking": r["smoking"],
+                "_probability": round(p, 4), "_outcome": r["y"],
+            }
+
+    sex_stats = {}
+    for s, label in ((0, "female"), (1, "male")):
+        sub = [r for r in rows if r["sex"] == s]
+        sex_stats[label] = {
+            "n": len(sub),
+            "prevalence": round(sum(r["y"] for r in sub) / len(sub), 4),
+        }
+
+    features = [
+        {
+            "key": "sex", "type": "segment", "label": "性别",
+            "options": [{"value": 0, "label": "女性"}, {"value": 1, "label": "男性"}],
+            "default": 0,
+        },
+        {
+            "key": "age", "type": "range", "label": "年龄", "unit": "岁",
+            "min": 18, "max": 80, "step": 1, "default": 60,
+        },
+        {
+            "key": "bmi", "type": "range", "label": "体质指数", "unit": "kg/m²",
+            "min": 15, "max": 55, "step": 0.1, "default": 32,
+        },
+        {
+            "key": "hba1c", "type": "range", "label": "糖化血红蛋白", "unit": "%",
+            "min": 3.5, "max": 9, "step": 0.1, "default": 6.4,
+        },
+        {
+            "key": "glucose", "type": "range", "label": "空腹血糖", "unit": "mg/dL",
+            "min": 60, "max": 300, "step": 1, "default": 160,
+        },
+        {
+            "key": "hypertension", "type": "toggle", "label": "高血压",
+            "hint": "已确诊或正在服药", "default": 0,
+        },
+        {
+            "key": "heart", "type": "toggle", "label": "冠心病",
+            "hint": "心肌梗死或冠心病史", "default": 0,
+        },
+        {
+            "key": "smoking", "type": "select", "label": "吸烟史",
+            "options": [{"value": k, "label": lab, "term": term} for k, lab, term in SMOKING],
+            "default": "never",
+        },
+    ]
+
     payload = {
         "meta": {
-            "dataset": "Pima Indians Diabetes Database (NIDDK / UCI)",
+            "dataset": "Diabetes Prediction Dataset (Kaggle, EHR-derived)",
+            "source": "https://www.kaggle.com/datasets/iammustafatz/diabetes-prediction-dataset",
             "n": n,
-            "n_train": len(train_idx),
-            "n_test": len(test_sorted),
-            "prevalence": round(sum(r["Outcome"] for r in rows) / n, 4),
+            "nBeforeDedup": n + n_dups,
+            "nDropped": n_dups,
+            "nTrain": len(train_idx),
+            "nTest": len(test_sorted),
+            "prevalence": round(sum(r["y"] for r in rows) / n, 4),
             "seed": SEED,
             "testRatio": TEST_RATIO,
             "l2": L2,
             "auc": round(auc, 4),
             "brier": round(brier, 4),
             "at50": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in at50.items()},
-            "zeroCounts": zero_counts,
-            "imputedFeatures": sorted(ZERO_AS_MISSING),
+            "sexStats": sex_stats,
         },
-        "features": [
-            {
-                "key": key,
-                "label": label,
-                "unit": unit,
-                "min": lo,
-                "max": hi,
-                "step": step,
-                "median": round(medians[key], 3),
-                "mean": round(means[j], 4),
-                "sd": round(sds[j], 4),
-                "missingHint": hint,
-            }
-            for j, (key, label, unit, lo, hi, step, hint) in enumerate(FEATURES)
-        ],
+        "features": features,
         "model": {
             "intercept": round(beta[0], 6),
-            "coef": [round(b, 6) for b in beta[1:]],
+            "weights": {k: round(v, 6) for k, v in weights.items()},
+            "means": {k: round(means[k], 4) for k in CONT},
+            "sds": {k: round(sds[k], 4) for k in CONT},
         },
-        "testScores": [[round(p, 4), y] for p, y in test_pairs],
+        "testScores": [[round(p, 4), y, rows[i]["sex"]] for (p, y), i in zip(test_pairs, test_sorted)],
         "presets": presets,
-        "roc": [[round(f, 4), round(t, 4)] for f, t in roc],
     }
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     js = (
         "/* 由 scripts/train.py 自动生成，请勿手工修改。\n"
-        " * 数据：Pima Indians Diabetes Database；模型：L2 正则逻辑回归（标准化特征）。\n"
+        " * 数据：Diabetes Prediction Dataset（含性别）；模型：L2 正则逻辑回归。\n"
         " */\n"
         "window.DIABETES_MODEL = "
         + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -270,10 +321,12 @@ def main():
     )
     OUT_PATH.write_text(js, encoding="utf-8")
 
-    print(f"训练集 {len(train_idx)} / 测试集 {len(test_sorted)}")
-    print(f"测试集 AUC = {auc:.4f}  Brier = {brier:.4f}")
+    print(f"清洗后 {n + n_dups} 行，去重删除 {n_dups} 行，保留 {n} 行")
+    print(f"训练 {len(train_idx)} / 测试 {len(test_sorted)}；患病率 {payload['meta']['prevalence']:.3f}")
+    print(f"AUC = {auc:.4f}  Brier = {brier:.4f}")
     print(f"阈值 0.5：敏感度 {at50['sensitivity']:.3f}  特异度 {at50['specificity']:.3f}  准确率 {at50['accuracy']:.3f}")
-    print(f"已写出 {OUT_PATH.relative_to(ROOT)}（{OUT_PATH.stat().st_size / 1024:.1f} KB）")
+    print(f"女性 {sex_stats['female']['n']}（{sex_stats['female']['prevalence']:.3f}） / 男性 {sex_stats['male']['n']}（{sex_stats['male']['prevalence']:.3f}）")
+    print(f"已写出 {OUT_PATH.relative_to(ROOT)}（{OUT_PATH.stat().st_size / 1024:.0f} KB）")
 
 
 if __name__ == "__main__":
