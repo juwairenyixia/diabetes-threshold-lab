@@ -13,32 +13,56 @@
 
 <header class="hero">
   <div class="hero__grid" aria-hidden="true"></div>
-  <nav class="nav shell" aria-label="页面导航">
-    <a class="brand" href="#top">
-      <span class="brand__mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M2 13h5l2-5 3.5 9 2.5-6 1.5 2H22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>
-      <span class="brand__text">决策阈值实验室<small>DIA · LAB</small></span>
-    </a>
-    <div class="nav__links">
-      <a href="#assess">患者评估</a>
-      <a href="#threshold">阈值实验</a>
-      <a href="#model">模型说明</a>
-      <a class="nav__repo" href="https://github.com/juwairenyixia/diabetes-threshold-lab" target="_blank" rel="noopener">GitHub <span aria-hidden="true">↗</span></a>
+  <div class="nav" id="siteNav">
+    <div class="shell nav__inner">
+      <a class="brand" href="#top">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M2 13h5l2-5 3.5 9 2.5-6 1.5 2H22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="brand__text">决策阈值实验室<small>DIA · LAB</small></span>
+      </a>
+      <div class="nav__links">
+        <a href="#assess">患者评估</a>
+        <a href="#threshold">阈值实验</a>
+        <a href="#model">模型说明</a>
+        <a class="nav__repo" href="https://github.com/juwairenyixia/diabetes-threshold-lab" target="_blank" rel="noopener">GitHub <span aria-hidden="true">↗</span></a>
+      </div>
     </div>
-  </nav>
+  </div>
 
   <div class="shell hero__inner">
-    <p class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>医学人工智能导论 · 课程项目</p>
-    <h1>糖尿病风险预测<br><span class="grad">与决策阈值实验室</span></h1>
-    <p class="lead">模型只负责给出一个概率；是否把它当作「阳性」，取决于你把阈值放在哪里。选择性别、拖动指标，观察敏感度、特异度与临床代价如何互相拉扯。</p>
+    <div class="hero__copy">
+      <p class="eyebrow"><span class="eyebrow__dot" aria-hidden="true"></span>医学人工智能导论 · 课程项目</p>
+      <h1>糖尿病风险预测<br><span class="grad">与决策阈值实验室</span></h1>
+      <p class="lead">模型只负责给出一个概率；是否把它当作「阳性」，取决于你把阈值放在哪里。<br class="lead-br">选择性别、拖动指标，观察敏感度、特异度与临床代价如何互相拉扯。</p>
 
-    <dl class="hero__stats">
-      <div><dt>测试集 AUC</dt><dd>0.956</dd></div>
-      <div><dt>样本量</dt><dd>79,334</dd></div>
-      <div><dt>输入特征</dt><dd>8</dd></div>
-      <div><dt>患病率</dt><dd>10.5<span>%</span></dd></div>
-    </dl>
+      <dl class="hero__stats">
+        <div><dt>测试集 AUC</dt><dd>0.956</dd></div>
+        <div><dt>样本量</dt><dd>79,334</dd></div>
+        <div><dt>输入特征</dt><dd>8</dd></div>
+        <div><dt>患病率</dt><dd>10.5<span>%</span></dd></div>
+      </dl>
+
+      <a class="hero__cue" href="#assess"><span>动手试一试</span><i aria-hidden="true">↓</i></a>
+    </div>
+
+    <aside class="hero-card" aria-hidden="true">
+      <div class="hero-card__top">
+        <span class="hero-card__live"><i></i>MODEL PREVIEW</span>
+        <span class="hero-card__badge">AUC <b id="heroAuc">0.956</b></span>
+      </div>
+      <div class="hero-card__chart-head">
+        <span>总代价曲线</span>
+        <span>漏诊 : 误诊 = 5 : 1</span>
+      </div>
+      <div class="hero-card__svg" id="heroCurve"></div>
+      <div class="hero-card__stats">
+        <div><span>默认阈值</span><b>0.50</b></div>
+        <div><span>漏诊例数</span><b id="heroFn">586</b></div>
+        <div><span>代价最优</span><b id="heroOpt">0.31</b></div>
+      </div>
+      <div class="hero-card__foot"><span>拖动阈值，观察临床代价</span><i>→</i></div>
+    </aside>
   </div>
 </header>
 
@@ -93,6 +117,7 @@
           <div class="result__meta">
             <span class="band" id="band">—</span>
             <p class="result__pct" id="percentile">—</p>
+            <div class="pct-track" aria-hidden="true"><span id="pctFill"></span><i id="pctDot"></i></div>
             <p class="result__verdict" id="verdict">—</p>
             <p class="result__truth" id="truth" hidden></p>
             <p class="result__privacy">
@@ -100,6 +125,20 @@
               纯本地推理 · 无后端 · 无数据上传
             </p>
           </div>
+        </div>
+
+        <div class="ruler">
+          <div class="ruler__head">
+            <h4>这张患者卡落在哪</h4>
+            <span class="ruler__hint">同一根轴上：患者概率 · 当前阈值 · 代价最优阈值</span>
+          </div>
+          <div class="ruler__chart" id="ruler"></div>
+          <div class="ruler__legend">
+            <span><i class="dot dot--pat"></i>当前患者</span>
+            <span><i class="dot dot--thr"></i>判定阈值</span>
+            <span><i class="dot dot--opt"></i>代价最优</span>
+          </div>
+          <p class="ruler__note" id="rulerNote">—</p>
         </div>
       </div>
     </div>
@@ -266,8 +305,19 @@
 
 <footer class="footer">
   <div class="shell footer__inner">
-    <p class="footer__brand">糖尿病风险 · 决策阈值实验室</p>
-    <p class="footer__meta">医学人工智能导论课程项目 · 数据：Diabetes Prediction Dataset (Kaggle) · 代码以 MIT 许可开源</p>
+    <div class="footer__brand">
+      <span class="footer__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M2 13h5l2-5 3.5 9 2.5-6 1.5 2H22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <div class="footer__text">
+        <p>糖尿病风险 · 决策阈值实验室</p>
+        <span>医学人工智能导论 · 课程项目</span>
+      </div>
+    </div>
+    <div class="footer__right">
+      <p class="footer__meta">数据：Diabetes Prediction Dataset (Kaggle) · 代码以 MIT 许可开源</p>
+      <a class="footer__top" href="#top">回到顶部 <span aria-hidden="true">↑</span></a>
+    </div>
   </div>
 </footer>
 

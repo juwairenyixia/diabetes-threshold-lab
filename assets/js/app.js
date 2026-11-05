@@ -155,6 +155,18 @@
   function buildGauge() {
     const cx = 150, cy = 150, r = 116;
     const arc = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
+    let ticks = "";
+    for (let i = 0; i <= 10; i++) {
+      const a = Math.PI - (i / 10) * Math.PI;
+      const r1 = 127;
+      const r2 = i % 5 === 0 ? 134 : 131;
+      const x1 = cx + r1 * Math.cos(a);
+      const y1 = cy - r1 * Math.sin(a);
+      const x2 = cx + r2 * Math.cos(a);
+      const y2 = cy - r2 * Math.sin(a);
+      ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"
+        stroke="${i % 5 === 0 ? "#b9c9d8" : "#dbe5ef"}" stroke-width="${i % 5 === 0 ? 1.4 : 1}" stroke-linecap="round"/>`;
+    }
     $("gauge").innerHTML = `
       <svg viewBox="0 0 300 168" aria-hidden="true">
         <defs>
@@ -164,6 +176,7 @@
             <stop offset="1" stop-color="#d9485f"/>
           </linearGradient>
         </defs>
+        ${ticks}
         <path d="${arc}" fill="none" stroke="#eef3f8" stroke-width="15" stroke-linecap="round"/>
         <path id="gaugeArc" class="gauge__arc" d="${arc}" pathLength="100" fill="none"
               stroke="url(#gaugeFill)" stroke-width="15" stroke-linecap="round"
@@ -217,8 +230,8 @@
       <svg viewBox="0 0 ${ROC_W} ${ROC_H}" role="img" aria-label="ROC 曲线，当前阈值工作点">
         <defs>
           <linearGradient id="rocFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="rgba(18,168,160,0.20)"/>
-            <stop offset="1" stop-color="rgba(18,168,160,0.01)"/>
+            <stop offset="0" stop-color="rgba(18,168,160,0.13)"/>
+            <stop offset="1" stop-color="rgba(18,168,160,0)"/>
           </linearGradient>
         </defs>
         ${grid}
@@ -256,6 +269,146 @@
     cy.setAttribute("x2", px);
     cy.setAttribute("y1", py);
     cy.setAttribute("y2", py);
+  }
+
+  /* ============================================================
+     首屏代价曲线预览卡
+     ============================================================ */
+  function buildHeroCurve() {
+    const el = $("heroCurve");
+    if (!el) return;
+    const W = 320, H = 148;
+    const pad = { l: 8, r: 8, t: 10, b: 18 };
+    const pw = W - pad.l - pad.r;
+    const ph = H - pad.t - pad.b;
+    const pts = costPoints(5);
+    const maxCost = Math.max(...pts.map((p) => p[1]));
+    const x = (t) => pad.l + ((t - 0.05) / 0.9) * pw;
+    const y = (c) => pad.t + ph - (c / maxCost) * ph;
+    const line = pts.map(([t, c], i) => `${i ? "L" : "M"}${x(t).toFixed(1)} ${y(c).toFixed(1)}`).join(" ");
+    const area = `M ${pad.l} ${pad.t + ph} ` +
+      pts.map(([t, c]) => `L${x(t).toFixed(1)} ${y(c).toFixed(1)}`).join(" ") +
+      ` L ${pad.l + pw} ${pad.t + ph} Z`;
+
+    const opt = pts.reduce((best, p) => (p[1] < best[1] ? p : best), pts[0]);
+    const now = statsAt(0.5);
+    const nowCost = ((now.fn * 5 + now.fp) / N) * 100;
+    const optX = x(opt[0]);
+    const optY = y(opt[1]);
+    const nowX = x(0.5);
+    const nowY = y(nowCost);
+
+    const grid = [0.05, 0.5, 0.95].map((t) =>
+      `<line x1="${x(t).toFixed(1)}" y1="${pad.t}" x2="${x(t).toFixed(1)}" y2="${pad.t + ph}" stroke="rgba(233,241,248,0.06)"/>`
+    ).join("") +
+      `<line x1="${pad.l}" y1="${y(maxCost / 2).toFixed(1)}" x2="${pad.l + pw}" y2="${y(maxCost / 2).toFixed(1)}" stroke="rgba(233,241,248,0.06)"/>`;
+
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true">
+      <defs>
+        <linearGradient id="heroCostFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="rgba(224,86,107,0.22)"/>
+          <stop offset="1" stop-color="rgba(224,86,107,0.01)"/>
+        </linearGradient>
+      </defs>
+      ${grid}
+      <path d="${area}" fill="url(#heroCostFill)"/>
+      <path d="${line}" fill="none" stroke="#e0566b" stroke-width="2"
+            stroke-linejoin="round" stroke-linecap="round"
+            style="filter: drop-shadow(0 0 6px rgba(224,86,107,.4))"/>
+      <line x1="${nowX}" y1="${pad.t}" x2="${nowX}" y2="${pad.t + ph}"
+            stroke="rgba(233,241,248,0.18)" stroke-dasharray="3 4"/>
+      <circle cx="${nowX}" cy="${nowY}" r="3.2" fill="#fff" stroke="#e0566b" stroke-width="2"/>
+      <circle cx="${optX}" cy="${optY}" r="7" fill="rgba(69,224,207,0.16)"/>
+      <circle cx="${optX}" cy="${optY}" r="3.4" fill="#eafffb" stroke="#45e0cf" stroke-width="2"/>
+      <text x="${optX + 9}" y="${optY - 7}" fill="#bff7ef" font-size="9">最优 ${opt[0].toFixed(2)}</text>
+      <text x="${x(0.05)}" y="${H - 4}" text-anchor="middle" fill="#7f9db1" font-size="8">0.05</text>
+      <text x="${x(0.5)}" y="${H - 4}" text-anchor="middle" fill="#7f9db1" font-size="8">0.50</text>
+      <text x="${x(0.95)}" y="${H - 4}" text-anchor="middle" fill="#7f9db1" font-size="8">0.95</text>
+    </svg>`;
+
+    $("heroAuc").textContent = META.auc.toFixed(3);
+    $("heroFn").textContent = now.fn.toLocaleString("zh-CN");
+    $("heroOpt").textContent = opt[0].toFixed(2);
+  }
+
+  /* ============================================================
+     概率标尺：患者概率 / 当前阈值 / 代价最优阈值
+     ============================================================ */
+  const RULER = { w: 560, h: 92, l: 18, r: 18, band: 26 };
+
+  function buildRuler() {
+    const { w, h, l, r, band } = RULER;
+    const pw = w - l - r;
+    const y = band;
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((v) => {
+      const x = l + v * pw;
+      return `<line x1="${x.toFixed(1)}" y1="${y - 6}" x2="${x.toFixed(1)}" y2="${y + 6}" stroke="#d7e2ed" stroke-width="1.2"/>
+        <text x="${x.toFixed(1)}" y="${y + 26}" text-anchor="middle" fill="#a7b6c5" font-size="9.5">${v.toFixed(2)}</text>`;
+    }).join("");
+
+    $("ruler").innerHTML = `
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="患者概率与阈值的位置关系">
+        <defs>
+          <linearGradient id="rulerSafe" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="rgba(31,157,114,0.16)"/>
+            <stop offset="1" stop-color="rgba(31,157,114,0.06)"/>
+          </linearGradient>
+          <linearGradient id="rulerRisk" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="rgba(217,72,95,0.06)"/>
+            <stop offset="1" stop-color="rgba(217,72,95,0.16)"/>
+          </linearGradient>
+        </defs>
+        <rect id="rulerSafe" x="${l}" y="${y - band / 2}" width="0" height="${band}" fill="url(#rulerSafe)" rx="6"/>
+        <rect id="rulerRisk" x="${l}" y="${y - band / 2}" width="${pw}" height="${band}" fill="url(#rulerRisk)" rx="6"/>
+        <line x1="${l}" y1="${y}" x2="${l + pw}" y2="${y}" stroke="#c9d6e4" stroke-width="1.5" stroke-linecap="round"/>
+        ${ticks}
+        <line id="rulerOpt" x1="0" y1="${y - 20}" x2="0" y2="${y + 8}" stroke="#d9485f" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.75"/>
+        <circle id="rulerOptDot" cx="0" cy="${y - 20}" r="3.2" fill="#d9485f"/>
+        <line id="rulerThr" x1="0" y1="${y - 16}" x2="0" y2="${y + 14}" stroke="#0f8d88" stroke-width="2"/>
+        <circle id="rulerPat" cx="0" cy="${y}" r="7" fill="#fff" stroke="#0c1a28" stroke-width="2.5"/>
+        <text id="rulerPatText" x="0" y="${y + 42}" text-anchor="middle" fill="#0c1a28" font-size="10" font-weight="600">—</text>
+      </svg>`;
+  }
+
+  function renderRuler(p) {
+    const { w, l, r, band } = RULER;
+    const pw = w - l - r;
+    const y = RULER.band;
+    const px = l + clamp(p, 0, 1) * pw;
+    const tx = l + clamp(state.threshold, 0, 1) * pw;
+    const ox = l + clamp(optThreshold(), 0, 1) * pw;
+
+    $("rulerSafe").setAttribute("width", Math.max(0, tx - l));
+    $("rulerRisk").setAttribute("x", tx);
+    $("rulerRisk").setAttribute("width", Math.max(0, l + pw - tx));
+
+    const thr = $("rulerThr");
+    thr.setAttribute("x1", tx);
+    thr.setAttribute("x2", tx);
+
+    const optLine = $("rulerOpt");
+    optLine.setAttribute("x1", ox);
+    optLine.setAttribute("x2", ox);
+    $("rulerOptDot").setAttribute("cx", ox);
+
+    const pat = $("rulerPat");
+    pat.setAttribute("cx", px);
+    const label = $("rulerPatText");
+    label.setAttribute("x", clamp(px, l + 22, l + pw - 22));
+    label.textContent = `${(p * 100).toFixed(1)}%`;
+    pat.setAttribute("r", 7);
+
+    const opt = optThreshold();
+    const note = $("rulerNote");
+    if (Math.abs(p - state.threshold) < 0.02) {
+      note.innerHTML = `患者概率几乎正好落在阈值上——这是最不稳定的判断区。`;
+    } else if (p >= state.threshold) {
+      const gap = ((p - state.threshold) * 100).toFixed(1);
+      note.innerHTML = `患者高于阈值 <b>${gap}</b> 个百分点 → 判为阳性。距离代价最优点还有 <b>${Math.abs(p - opt) >= 0.02 ? Math.abs(p - opt).toFixed(2) : "≈0"}</b>。`;
+    } else {
+      const gap = ((state.threshold - p) * 100).toFixed(1);
+      note.innerHTML = `患者低于阈值 <b>${gap}</b> 个百分点 → 判为阴性。若把阈值降到 <b>${opt.toFixed(2)}</b>（代价最优），本例${p >= opt ? "会转为阳性" : "仍为阴性"}。`;
+    }
   }
 
   /* ============================================================
@@ -613,6 +766,7 @@
     const opt = optThreshold();
 
     renderGauge(p);
+    renderRuler(p);
     renderROC(s);
     renderMatrix(s);
     renderDist(state.threshold);
@@ -626,7 +780,10 @@
     const sex = Number(state.values.sex);
     const pool = SEX_PROBS[sex];
     const below = lowerBound(pool, p);
-    $("percentile").innerHTML = `高于同性别测试人群 <b>${Math.round((below / pool.length) * 100)}%</b>`;
+    const pct = Math.round((below / pool.length) * 100);
+    $("percentile").innerHTML = `高于同性别测试人群 <b>${pct}%</b>`;
+    $("pctFill").style.width = `${pct}%`;
+    $("pctDot").style.left = `${pct}%`;
 
     const positive = p >= state.threshold;
     const verdict = $("verdict");
@@ -742,10 +899,20 @@
   /* ============================================================
      初始化
      ============================================================ */
+  function initNav() {
+    const nav = $("siteNav");
+    if (!nav) return;
+    const update = () => nav.classList.toggle("is-scrolled", window.scrollY > 24);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+  }
+
   function init() {
     $("aucVal").textContent = META.auc.toFixed(3);
     buildGauge();
+    buildRuler();
     buildROC();
+    buildHeroCurve();
     buildMatrix();
     buildDist();
     buildCost();
@@ -753,6 +920,7 @@
     buildPresets();
     buildSex();
     buildControls();
+    initNav();
     syncForm();
     syncPresetUI();
     render();
