@@ -4,6 +4,17 @@
 >
 > 仓库：<https://github.com/juwairenyixia/diabetes-threshold-lab>
 
+## 🚀 在线访问
+
+**<https://juwairenyixia.github.io/diabetes-threshold-lab/>**
+
+| 页面 | 直达链接 |
+| --- | --- |
+| 首页（3D 致病因素图谱） | <https://juwairenyixia.github.io/diabetes-threshold-lab/> |
+| 风险预测实验室 | <https://juwairenyixia.github.io/diabetes-threshold-lab/risk.html> |
+
+无需安装、无需登录，打开即可使用。建议用 Chrome / Edge / Safari 等现代浏览器。
+
 ![首页：致病因素三维图谱](docs/home.png)
 
 站点有两个页面：
@@ -154,9 +165,14 @@ python scripts/train.py
 
 ## 部署到 GitHub Pages
 
-代码已推送到 <https://github.com/juwairenyixia/diabetes-threshold-lab>，Pages 站点：
+代码已推送到 <https://github.com/juwairenyixia/diabetes-threshold-lab>。
 
-**<https://juwairenyixia.github.io/diabetes-threshold-lab/>**
+线上站点（仓库 `main` 分支根目录，`Deploy from a branch` 方式发布）：
+
+- 首页：<https://juwairenyixia.github.io/diabetes-threshold-lab/>
+- 预测页：<https://juwairenyixia.github.io/diabetes-threshold-lab/risk.html>
+
+更新后一般 1–2 分钟生效；若浏览器显示旧版本，强制刷新（Ctrl/Cmd + Shift + R）即可。
 
 如果需要在另一台机器上重新推送：
 
